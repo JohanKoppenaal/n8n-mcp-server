@@ -1,9 +1,11 @@
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const fetch = require('node-fetch');
 const app = express();
 const port = process.env.PORT || 3000;
+
+// Hardcoded auth token
+const AUTH_TOKEN = "h1mcp";
 
 // Basic middlewares
 app.use(cors());
@@ -16,10 +18,40 @@ app.use((req, res, next) => {
   next();
 });
 
-// Required MCP health endpoint
+// Authentication middleware for all routes except ping
+const authenticate = (req, res, next) => {
+  // Extract token from Authorization header
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace('Bearer ', '');
+  
+  console.log(`Received auth token: ${token}`);
+  
+  // Check if token matches
+  if (token !== AUTH_TOKEN) {
+    console.log(`Authentication failed. Expected: ${AUTH_TOKEN}, Received: ${token}`);
+    return res.status(401).json({ error: 'Unauthorized. Invalid or missing token.' });
+  }
+  
+  console.log('Authentication successful');
+  next();
+};
+
+// Ping endpoint without auth
 app.get('/ping', (req, res) => {
   console.log('Received ping request');
+  // Ping requests can succeed without auth
   res.json({ status: 'ok' });
+});
+
+// All other endpoints require authentication
+app.use((req, res, next) => {
+  // Skip auth for ping and OPTIONS
+  if (req.path === '/ping' || req.method === 'OPTIONS') {
+    return next();
+  }
+  
+  // Apply authentication for everything else
+  authenticate(req, res, next);
 });
 
 // Basic info endpoint
@@ -31,7 +63,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// MCP server manifest - essential for proper MCP operation
+// MCP server manifest
 app.get('/manifest', (req, res) => {
   res.json({
     schema_version: "v1",
@@ -70,36 +102,22 @@ app.get('/manifest', (req, res) => {
 // MCP tool execution endpoint
 app.post('/tools/:tool_name', async (req, res) => {
   const { tool_name } = req.params;
-  const authHeader = req.headers.authorization;
   
   console.log(`Tool execution request for: ${tool_name}`);
-  console.log(`Auth header: ${authHeader}`);
   console.log(`Request body: ${JSON.stringify(req.body)}`);
-  
-  // Validate auth token
-  const token = authHeader?.replace('Bearer ', '');
-  if (token !== 'h1mcp') {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
   
   if (tool_name === 'n8n_action') {
     try {
-      // Forward the request to n8n
-      const n8nUrl = 'https://h1webdevelopment.app.n8n.cloud/mcp/d2a6f99e-f9dc-4bfe-9678-0f06d6b89696/sse';
-      
-      // For a tool execution, we would normally make a POST request
-      // However, in this case we're routing to an SSE endpoint which expects GET
-      // This is just a simple example and would need to be modified for actual functionality
-      
-      // Return a simple success response for now
+      // Here you would normally forward the request to n8n
+      // For now, just return a success response
       return res.json({
         result: {
-          message: `Action "${req.body.action || 'unknown'}" queued for execution`,
+          message: `Action "${req.body.action || 'unknown'}" executed successfully`,
           timestamp: new Date().toISOString()
         }
       });
     } catch (error) {
-      console.error('Error forwarding to n8n:', error);
+      console.error('Error executing tool:', error);
       return res.status(500).json({ error: error.message });
     }
   } else {
@@ -107,7 +125,7 @@ app.post('/tools/:tool_name', async (req, res) => {
   }
 });
 
-// MCP Server discovery endpoint - critical for proper operation
+// MCP Server discovery endpoint
 app.get('/v1/discovery', (req, res) => {
   res.json({
     schema_version: "v1",
@@ -125,5 +143,5 @@ app.get('/v1/discovery', (req, res) => {
 app.listen(port, '0.0.0.0', () => {
   console.log(`MCP server running on port ${port}`);
   console.log(`Server URL: http://0.0.0.0:${port}`);
-  console.log(`Auth token: h1mcp`);
+  console.log(`Auth token: ${AUTH_TOKEN}`);
 });

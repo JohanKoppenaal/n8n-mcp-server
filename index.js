@@ -1,79 +1,63 @@
 const express = require('express');
 const { spawn } = require('child_process');
+const http = require('http');
+const https = require('https');
 const app = express();
 const port = process.env.PORT || 3000;
 
 // Hardcoded auth token
-const AUTH_TOKEN = "h1mcp"; // Ik zie dat je "h1mcp" gebruikt als token
+const AUTH_TOKEN = "h1mcp";
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', message: 'MCP server is running' });
+  res.json({ status: 'ok', message: 'Server is running' });
 });
 
 // Root endpoint
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'MCP server is active' });
+  res.json({ 
+    status: 'ok', 
+    message: 'MCP proxy server is active',
+    usage: 'Configure TypingMind with this URL and auth token: h1mcp'
+  });
 });
 
-// Start de Express server en MCP server apart
-console.log(`Attempting to start Express server on port ${port}`);
+// Ping endpoint - dit is wat TypingMind probeert aan te roepen
+app.get('/ping', (req, res) => {
+  res.json({ 
+    status: 'ok',
+    timestamp: new Date().toISOString() 
+  });
+});
 
-// Start MCP server zonder specifieke poort te binden
-const startMCP = () => {
-  console.log(`Starting MCP server with auth token: ${AUTH_TOKEN}`);
+// Create simple proxy for the n8n MCP endpoint
+app.get('/mcp-proxy', (req, res) => {
+  const n8nUrl = 'https://h1webdevelopment.app.n8n.cloud/mcp/d2a6f99e-f9dc-4bfe-9678-0f06d6b89696/sse';
   
-  const mcp = spawn('npx', [
-    '@typingmind/mcp',
-    AUTH_TOKEN
-  ], {
-    stdio: 'inherit'
+  // Set headers for SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  
+  // Proxy the request to n8n
+  const request = https.get(n8nUrl, (response) => {
+    // Pipe the response from n8n to our client
+    response.pipe(res);
   });
   
-  mcp.on('error', (err) => {
-    console.error('Failed to start MCP server:', err);
-    console.log('Falling back to supergateway...');
-    
-    const supergateway = spawn('npx', [
-      'supergateway',
-      '--sse',
-      'https://h1webdevelopment.app.n8n.cloud/mcp/d2a6f99e-f9dc-4bfe-9678-0f06d6b89696/sse'
-    ], {
-      stdio: 'inherit'
-    });
-    
-    supergateway.on('error', (gwErr) => {
-      console.error('Failed to start supergateway:', gwErr);
-    });
+  request.on('error', (error) => {
+    console.error('Error proxying to n8n:', error);
+    res.status(500).end(`Error: ${error.message}`);
   });
   
-  return mcp;
-};
+  // Handle client disconnect
+  req.on('close', () => {
+    request.destroy();
+  });
+});
 
-// Start Express on a different port if the first one fails
-const startExpress = (attemptPort) => {
-  app.listen(attemptPort, '0.0.0.0')
-    .on('error', (err) => {
-      if (err.code === 'EADDRINUSE') {
-        console.log(`Port ${attemptPort} is in use, trying another port...`);
-        // Try a random port in a valid range
-        const newPort = Math.floor(Math.random() * (65535 - 10001)) + 10001;
-        startExpress(newPort);
-      } else {
-        console.error('Express server error:', err);
-      }
-    })
-    .on('listening', () => {
-      console.log(`Express server successfully running on port ${attemptPort}`);
-      // Start MCP server after Express is running
-      const mcpProcess = startMCP();
-      
-      process.on('SIGTERM', () => {
-        mcpProcess.kill();
-        process.exit(0);
-      });
-    });
-};
-
-// Start with the environment-provided port
-startExpress(port);
+// Start server
+console.log(`Starting Express server on port ${port}`);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Express server running on port ${port}`);
+});

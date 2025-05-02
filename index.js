@@ -8,6 +8,18 @@ const port = process.env.PORT || 3000;
 // Hardcoded auth token
 const AUTH_TOKEN = "h1mcp";
 
+// BELANGRIJK: Voeg de body parsers toe VÓÓR de routes
+// Enable body parsing
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Add request logging
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  next();
+});
+
+// Nu komen de routes
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
@@ -22,7 +34,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// Ping endpoint - dit is wat TypingMind probeert aan te roepen
+// Ping endpoint
 app.get('/ping', (req, res) => {
   res.json({ 
     status: 'ok',
@@ -43,6 +55,9 @@ app.all('/mcp-proxy*', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  // Rest van de proxy code...
+  // ...
   
   // Bereid de juiste URL voor, afhankelijk van de request
   const targetUrl = n8nBaseUrl;
@@ -93,15 +108,6 @@ app.all('/mcp-proxy*', (req, res) => {
   req.on('close', () => {
     proxyReq.destroy();
   });
-});
-
-// Enable body parsing for JSON
-app.use(express.json());
-
-// Add request logging
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
-  next();
 });
 
 // Start server

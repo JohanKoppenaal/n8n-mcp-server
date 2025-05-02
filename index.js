@@ -1,6 +1,6 @@
 const { spawn } = require('child_process');
 const port = process.env.PORT || 3000;
-const authToken = h1mcp || 'jouw-auth-token';
+const authToken = "h1mcp" || 'jouw-auth-token';
 
 console.log(`Starting MCP runner on port ${port}`);
 const mcp = spawn('npx', [

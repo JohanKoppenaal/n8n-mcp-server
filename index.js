@@ -1,117 +1,131 @@
 const express = require('express');
-const { spawn } = require('child_process');
 const http = require('http');
 const https = require('https');
+const EventSource = require('eventsource');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Hardcoded auth token
-const AUTH_TOKEN = "h1mcp";
+// CORS middleware
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
-// BELANGRIJK: Voeg de body parsers toe VÓÓR de routes
-// Enable body parsing
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Add request logging
+// Logging middleware
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
   next();
 });
 
-// Nu komen de routes
-// Health check endpoint
+// Body parsers
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Basic endpoints
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', message: 'Server is running' });
+  res.json({ status: 'ok' });
 });
 
-// Root endpoint
 app.get('/', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    message: 'MCP proxy server is active',
-    usage: 'Configure TypingMind with this URL and auth token: h1mcp'
-  });
+  res.json({ status: 'ok', message: 'MCP proxy is active' });
 });
 
-// Ping endpoint
 app.get('/ping', (req, res) => {
-  res.json({ 
-    status: 'ok',
-    timestamp: new Date().toISOString() 
-  });
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Verbeterde MCP proxy die alle parameters doorgeeft
-app.all('/mcp-proxy*', (req, res) => {
-  console.log(`Received MCP request: ${req.method} ${req.url}`);
+// Dedicated SSE proxy for n8n
+app.get('/mcp-proxy', (req, res) => {
+  const n8nUrl = 'https://h1webdevelopment.app.n8n.cloud/mcp/d2a6f99e-f9dc-4bfe-9678-0f06d6b89696/sse';
   
-  const n8nBaseUrl = 'https://h1webdevelopment.app.n8n.cloud/mcp/d2a6f99e-f9dc-4bfe-9678-0f06d6b89696/sse';
+  console.log(`Establishing SSE connection to: ${n8nUrl}`);
   
-  // Set headers for SSE
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // Set SSE headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  });
   
-  // Rest van de proxy code...
-  // ...
+  // Create an EventSource to connect to n8n
+  const eventSource = new EventSource(n8nUrl);
   
-  // Bereid de juiste URL voor, afhankelijk van de request
-  const targetUrl = n8nBaseUrl;
-  console.log(`Proxying to: ${targetUrl}`);
-  
-  // Convert body to string if it exists
-  let bodyData = '';
-  if (req.body) {
-    bodyData = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-  }
-  
-  // Setup options for the proxy request
-  const options = {
-    method: req.method,
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': req.headers['user-agent'] || 'MCP-Proxy',
-      'Accept': req.headers['accept'] || '*/*'
-    }
+  // Forward all events from n8n to client
+  eventSource.onmessage = (event) => {
+    console.log(`Received event from n8n: ${event.data.substring(0, 100)}...`);
+    res.write(`data: ${event.data}\n\n`);
   };
   
-  // Make the proxy request
-  const proxyReq = https.request(targetUrl, options, (proxyRes) => {
-    console.log(`Received response from n8n with status: ${proxyRes.statusCode}`);
-    
-    // Copy response headers
-    Object.keys(proxyRes.headers).forEach(key => {
-      res.setHeader(key, proxyRes.headers[key]);
-    });
-    
-    // Pipe response from n8n to client
-    proxyRes.pipe(res);
+  eventSource.onerror = (err) => {
+    console.error('EventSource error:', err);
+    // Keep the connection open, don't close on error
+  };
+  
+  // Handle specific events if needed
+  eventSource.addEventListener('open', () => {
+    console.log('Connection to n8n established');
+    res.write(`data: {"type":"connected"}\n\n`);
   });
-  
-  proxyReq.on('error', (error) => {
-    console.error('Error proxying to n8n:', error);
-    res.status(500).end(`Error: ${error.message}`);
-  });
-  
-  // Send body data if present
-  if (bodyData && req.method !== 'GET' && req.method !== 'HEAD') {
-    proxyReq.write(bodyData);
-  }
-  
-  proxyReq.end();
   
   // Handle client disconnect
   req.on('close', () => {
-    proxyReq.destroy();
+    console.log('Client disconnected, closing EventSource');
+    eventSource.close();
   });
 });
 
+// Handle POST requests to mcp-proxy with JSON body forwarding
+app.post('/mcp-proxy', (req, res) => {
+  const n8nUrl = 'https://h1webdevelopment.app.n8n.cloud/mcp/d2a6f99e-f9dc-4bfe-9678-0f06d6b89696';
+  
+  console.log(`Forwarding POST request to: ${n8nUrl}`);
+  console.log(`Request body: ${JSON.stringify(req.body)}`);
+  
+  const options = {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': req.headers['user-agent'] || 'MCP-Proxy'
+    }
+  };
+  
+  const proxyReq = https.request(n8nUrl, options, (proxyRes) => {
+    let responseData = '';
+    
+    proxyRes.on('data', (chunk) => {
+      responseData += chunk;
+    });
+    
+    proxyRes.on('end', () => {
+      console.log(`Response from n8n: ${responseData.substring(0, 100)}...`);
+      res.status(proxyRes.statusCode).send(responseData);
+    });
+  });
+  
+  proxyReq.on('error', (error) => {
+    console.error('Error forwarding to n8n:', error);
+    res.status(500).json({ error: error.message });
+  });
+  
+  proxyReq.write(JSON.stringify(req.body));
+  proxyReq.end();
+});
+
 // Start server
-console.log(`Starting Express server on port ${port}`);
-app.listen(port, '0.0.0.0', () => {
-  console.log(`Express server running on port ${port}`);
+const server = app.listen(port, '0.0.0.0', () => {
+  console.log(`Server running on port ${port}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
 });
